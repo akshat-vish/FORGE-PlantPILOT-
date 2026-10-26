@@ -1,0 +1,26 @@
+[project]
+name = "plantpilot"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.162.0",
+    "openai>=3.37.0",
+    "pydantic>=2.14.1",
+    "pytest>=9.1.1",
+    "python-dotenv>=1.2.4",
+    "scikit-learn>=1.5.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[tool.setuptools]
+packages = ["plantpilot"]
+
+[tool.setuptools.package-dir]
+"plantpilot" = "app/plantpilot"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+pythonpath = ["app"]

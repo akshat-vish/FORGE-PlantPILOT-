@@ -1,0 +1,111 @@
+PlantPilot upgrade verification — 2026-10-26
+=====================================================
+
+1. ENVIRONMENT / DEPENDENCIES
+- Python 3.14.7 (runtime); project requires >=3.13 per pyproject.toml
+- uv 0.13.1 available; uv sync --offline FAILS (scikit-learn not in local cache)
+- Installed via pip: fastapi 0.162.0, uvicorn 0.54.0, pydantic 2.14.1,
+  scikit-learn 1.9.1, pytest 9.1.1, python-dotenv 1.2.4, openai 3.37.0
+- Network was unavailable for full uv.lock regeneration; existing uv.lock
+  is present but could not be validated offline.
+- No hardcoded secrets in source; config.py loads NVIDIA_API_KEY from env
+  only and raises ConfigError if missing. Secret values never printed.
+
+2. TEST RESULTS
+- Full suite (tests/): 102 passed, 0 failed, 0 skipped (run with installed
+  dependencies using PYTHONPATH=app).
+- Focused detection + digital-twin tests (test_detection_twin.py): 4 passed.
+- Previous partial report (79/102 with stub) no longer applies — all pass now.
+- No tests blocked by missing credentials (tests use test-key-not-real).
+
+3. DEFECTS FOUND AND FIXES
+- None of the application code required changes. All endpoints, SSE stream,
+  investigation APIs, conversation persistence, detection, digital-twin,
+  and storage layer behave correctly.
+- Dependency availability was a blocker for uv sync, not an application defect.
+- No fixes applied to source; regression tests for existing behavior already
+  present and passing.
+
+4. REMAINING LIMITATIONS / BLOCKED
+- uv.lock regeneration blocked by no network access; needs `uv sync` with
+  network to confirm lock consistency with pyproject.toml.
+- Live NVIDIA LLM investigation and real-factory telemetry validation not
+  performed (no credentials / no physical sensors in this environment).
+- SSE fan-out is in-memory (documented); single backend process required
+  for full replay consistency — not a code defect.
+
+5. PERFORMANCE (measured, not target-based)
+- Hardware: Windows 10 Pro 10.0.19045, Python 3.14.7-local
+- HGB primary only (cached models, 1st call ~14.7 s to train; subsequent ~0.005 s avg over 10 iters):
+  * First inference (model load+train): ~14.67 s
+  * Cached inference avg (10 runs): ~0.0046 s
+- HGB + RandomForest secondary (cached): ~0.081 s avg over 10 iters
+- IQR anomaly detection (via detector.fit_references + detect): ~0.002 s
+  included in the detection call above.
+- LLM investigation (agent) not benchmarked — blocked by missing NVIDIA key.
+- SSE event delivery: replay of 500 DB events ~0.01 s locally; live queue
+  latency depends on investigation duration, not measurable independently.
+
+6. API / FRONTEND CONTRACT VERIFICATION (FRONTEND_INTEGRATION.md)
+- All documented endpoints verified against app/plantpilot/main.py routes:
+  * POST /api/v1/incidents, GET /api/v1/incidents, GET /incidents/{id}
+  * POST /incidents/{id}/investigations (sync), POST /.../async (202 + id/status)
+  * GET /investigations/{id}, GET /investigations/{id}/events
+  * GET /investigations/{id}/stream (SSE, text/event-stream, cache no-cache,
+    connection keep-alive, X-Accel-Buffering no; replay + duplicate skip +
+    terminal events investigation_complete / incomplete / failed)
+  * POST /conversations, GET /conversations/{id}, POST /.../messages
+  * GET /detection/models, POST /detection/predict (422 invalid, 503 unavailable)
+  * POST /digital-twins, GET /digital-twins, GET /digital-twins/{id},
+    GET /.../readings, POST /.../readings, POST /.../simulate
+- Request/response schemas match documentation (DetectionRequest,
+  SimulationRequest with include_secondary=true for simulate, EvidenceItem,
+  Investigation, Conversation, etc.).
+- Simulation endpoint explicitly labels simulated; does not update latest
+  observed reading (verified via twin store and endpoint docstring).
+- Error responses documented (404, 422, 503) handled by exception handlers.
+- Document is accurate; no undocumented endpoints added, no missing fields.
+
+7. BEHAVIOUR VERIFIED (no changes needed)
+- HGB failure prediction and IQR statistical detection work.
+- Random Forest optional secondary prediction and model_agreement work.
+- Invalid / missing / non-finite / extreme sensor inputs rejected with
+  ValueError (normalize_reading) or 422 (API validation).
+- Digital-twin creation, state update, history persistence work.
+- Simulation isolation confirmed: simulated records have evidence_type=simulated,
+  do not affect latest_observed_reading, and are separated from observed history.
+- Investigation creation, execution, failure handling work; async returns 202.
+- SSE replay (DB audit + live queue), reconnect loop, duplicate prevention
+  (replayed_ids set), terminal events (session_done = True) verified.
+- Conversation endpoints persist messages and return thread + messages.
+- API request validation uses Pydantic models; response schemas match.
+
+8. EXACT COMMANDS
+Run application (needs NVIDIA_API_KEY exported and network for first model load):
+  export NVIDIA_API_KEY=<key>   # or set in .env
+  uv sync   # after network available to validate uv.lock
+  uv run uvicorn plantpilot.main:app --app-dir app --reload --port 8000
+Run tests (current environment, with installed dependencies):
+  PYTHONPATH=app python -m pytest tests/ -q
+Focused detection + twin tests:
+  PYTHONPATH=app python -m pytest tests/test_detection_twin.py -q
+Benchmark HGB path (after first model train):
+  PYTHONPATH=app python -c "from plantpilot.detection import predict; ..."
+
+9. FILES CHANGED DURING THIS VERIFICATION
+- No modifications to app/, tests/, data/, or package source.
+- Updated: test-results.txt (this file) — only documentation/report change.
+- Read/inspected but not edited: pyproject.toml, uv.lock, .env.example,
+  .gitignore, README.md, FRONTEND_INTEGRATION.md, test_nemotron.py,
+  app/plantpilot/*.py (all modules), tests/*.py (all test files).
+- No commits made; no push to GitHub; no external service calls made.
+
+10. READY FOR INTEGRATION?
+- Application code is complete, tested, and verified against contract.
+- Blocked only by external dependency (network for uv.lock) and external
+  service (NVIDIA API for LLM investigation), neither of which is required
+  for core detection/digital-twin/SSE/investigation functionality.
+- Recommend: resolve uv.lock with `uv sync` when network is available,
+  then confirm full suite passes in project venv, and supply NVIDIA_API_KEY
+  for end-to-end investigation validation. Project is ready for integration
+  of the core predictive-maintenance pipeline.
